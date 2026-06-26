@@ -23,3 +23,5 @@
   방화벽 규칙 활성화 방법과 NSSM을 통한 에이전트 서비스화 절차를 안내합니다.
 * [06_장애 대응 트러블슈팅 가이드](file:///h:/lee/go-watchdog/docs/06_troubleshooting.md)  
   DB 락 현상, 통신 장애, 오프라인 오탐지 등 상황별 점검 요령과 극복 방안을 설명합니다.
+* [07_OS별 빌드 가이드](file:///h:/lee/go-watchdog/docs/07_build_guide.md)  
+  Windows 및 Ubuntu(Linux) OS에서의 기본 로컬 빌드 및 크로스 컴파일 명령어 세트를 안내합니다.
