@@ -1,0 +1,658 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>go-watchdog 모니터링 대시보드</title>
+    <meta name="description" content="실시간 시스템 자원 모니터링 및 서버 관제 서비스 대시보드">
+    <!-- Google Fonts: Inter -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        /* CSS reset & base variables */
+        :root {
+            --bg-gradient-start: #0b0f19;
+            --bg-gradient-end: #020617;
+            --card-bg: rgba(30, 41, 59, 0.45);
+            --card-border: rgba(255, 255, 255, 0.08);
+            --card-border-hover: rgba(255, 255, 255, 0.18);
+            --text-primary: #f8fafc;
+            --text-secondary: #94a3b8;
+            --text-muted: #64748b;
+            
+            --color-emerald: #10b981;
+            --color-amber: #f59e0b;
+            --color-rose: #f43f5e;
+            --color-blue: #3b82f6;
+
+            --shadow-premium: 0 10px 30px -10px rgba(0, 0, 0, 0.5), 0 1px 1px 0 rgba(255, 255, 255, 0.05) inset;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: radial-gradient(circle at 50% 0%, var(--bg-gradient-start) 0%, var(--bg-gradient-end) 100%);
+            color: var(--text-primary);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow-x: hidden;
+        }
+
+        /* Layout & Header */
+        header {
+            max-width: 1400px;
+            width: 100%;
+            margin: 0 auto;
+            padding: 2.5rem 1.5rem 1.5rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .logo-container {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .logo-icon {
+            width: 12px;
+            height: 12px;
+            background-color: var(--color-blue);
+            border-radius: 50%;
+            position: relative;
+            box-shadow: 0 0 12px 3px var(--color-blue);
+        }
+
+        .logo-icon::after {
+            content: '';
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            border-radius: 50%;
+            background-color: var(--color-blue);
+            animation: pulse-glow 2s infinite;
+        }
+
+        h1 {
+            font-size: 1.25rem;
+            font-weight: 600;
+            letter-spacing: -0.025em;
+            background: linear-gradient(135deg, #fff 0%, #cbd5e1 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .system-status-indicator {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+            background: rgba(30, 41, 59, 0.3);
+            padding: 0.35rem 0.75rem;
+            border-radius: 9999px;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .pulse-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background-color: var(--color-emerald);
+            animation: pulse-emerald 1.5s infinite;
+        }
+
+        main {
+            flex: 1;
+            max-width: 1400px;
+            width: 100%;
+            margin: 0 auto;
+            padding: 2rem 1.5rem 4rem;
+        }
+
+        /* Server Grid Layout */
+        .grid-container {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(420px, 1fr));
+            gap: 1.5rem;
+        }
+
+        @media (max-width: 480px) {
+            .grid-container {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        /* Glassmorphic Server Card */
+        .server-card {
+            background: var(--card-bg);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid var(--card-border);
+            border-radius: 1rem;
+            padding: 1.5rem;
+            box-shadow: var(--shadow-premium);
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            gap: 1.25rem;
+            opacity: 1;
+            transform: scale(1);
+        }
+
+        .server-card:hover {
+            transform: translateY(-4px);
+            border-color: var(--card-border-hover);
+            box-shadow: 0 20px 40px -15px rgba(0, 0, 0, 0.6), 0 0 1px 1px var(--card-border-hover) inset;
+        }
+
+        .server-card.offline-state {
+            border-color: rgba(244, 63, 94, 0.2);
+        }
+        
+        .server-card.offline-state::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            border-radius: 1rem;
+            background: rgba(2, 6, 23, 0.4);
+            pointer-events: none;
+            z-index: 10;
+        }
+
+        /* Card Header */
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            z-index: 11;
+        }
+
+        .agent-info {
+            display: flex;
+            flex-direction: column;
+            gap: 0.25rem;
+        }
+
+        .agent-id {
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: var(--text-primary);
+            letter-spacing: -0.01em;
+        }
+
+        .last-seen {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+        }
+
+        .status-badge {
+            display: flex;
+            align-items: center;
+            gap: 0.35rem;
+            padding: 0.25rem 0.6rem;
+            border-radius: 9999px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .status-badge.online {
+            background-color: rgba(16, 185, 129, 0.1);
+            color: var(--color-emerald);
+            border: 1px solid rgba(16, 185, 129, 0.2);
+        }
+
+        .status-badge.offline {
+            background-color: rgba(244, 63, 94, 0.1);
+            color: var(--color-rose);
+            border: 1px solid rgba(244, 63, 94, 0.2);
+        }
+
+        .badge-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+        }
+
+        .status-badge.online .badge-dot {
+            background-color: var(--color-emerald);
+            animation: pulse-emerald 1.5s infinite;
+        }
+
+        .status-badge.offline .badge-dot {
+            background-color: var(--color-rose);
+            animation: pulse-rose 1.5s infinite;
+        }
+
+        /* Card Content & Metrics */
+        .card-content {
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+            z-index: 11;
+        }
+
+        .metric-group {
+            display: flex;
+            flex-direction: column;
+            gap: 0.4rem;
+        }
+
+        .metric-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 0.85rem;
+            font-weight: 500;
+        }
+
+        .metric-label {
+            color: var(--text-secondary);
+        }
+
+        .metric-value {
+            font-weight: 600;
+            font-variant-numeric: tabular-nums;
+        }
+
+        /* Premium Custom Progress Bar */
+        .progress-container {
+            width: 100%;
+            height: 8px;
+            background: rgba(15, 23, 42, 0.6);
+            border-radius: 9999px;
+            overflow: hidden;
+            border: 1px solid rgba(255, 255, 255, 0.03);
+            position: relative;
+        }
+
+        .progress-bar {
+            height: 100%;
+            border-radius: 9999px;
+            width: 0%;
+            transition: width 0.8s cubic-bezier(0.4, 0, 0.2, 1), background-color 0.5s ease;
+        }
+
+        .bar-normal {
+            background: linear-gradient(90deg, #10b981, #059669);
+            box-shadow: 0 0 10px rgba(16, 185, 129, 0.3);
+        }
+
+        .bar-warn {
+            background: linear-gradient(90deg, #f59e0b, #d97706);
+            box-shadow: 0 0 10px rgba(245, 158, 11, 0.3);
+        }
+
+        .bar-danger {
+            background: linear-gradient(90deg, #ef4444, #b91c1c);
+            box-shadow: 0 0 10px rgba(239, 68, 68, 0.3);
+        }
+
+        /* Disk Section */
+        .disk-section {
+            border-top: 1px solid rgba(255, 255, 255, 0.05);
+            padding-top: 1rem;
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+            z-index: 11;
+        }
+
+        .disk-title {
+            font-size: 0.8rem;
+            text-transform: uppercase;
+            letter-spacing: 0.075em;
+            color: var(--text-muted);
+            font-weight: 700;
+        }
+
+        .disk-grid {
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+        }
+
+        /* Empty state styling */
+        .no-data {
+            grid-column: 1 / -1;
+            background: var(--card-bg);
+            backdrop-filter: blur(12px);
+            border: 1px solid var(--card-border);
+            border-radius: 1rem;
+            padding: 4rem 2rem;
+            text-align: center;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 1rem;
+            box-shadow: var(--shadow-premium);
+        }
+
+        .no-data-icon {
+            width: 48px;
+            height: 48px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid rgba(255, 255, 255, 0.07);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--text-muted);
+            font-size: 1.5rem;
+            animation: bounce 2s infinite ease-in-out;
+        }
+
+        .no-data-text {
+            color: var(--text-secondary);
+            font-size: 1rem;
+            font-weight: 500;
+        }
+
+        .no-data-hint {
+            color: var(--text-muted);
+            font-size: 0.85rem;
+            max-width: 320px;
+        }
+
+        footer {
+            max-width: 1400px;
+            width: 100%;
+            margin: 0 auto;
+            padding: 2rem 1.5rem;
+            text-align: center;
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            border-top: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        /* Keyframes */
+        @keyframes pulse-glow {
+            0% { transform: scale(1); opacity: 0.8; }
+            50% { transform: scale(2.2); opacity: 0; }
+            100% { transform: scale(1); opacity: 0; }
+        }
+
+        @keyframes pulse-emerald {
+            0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4); }
+            70% { box-shadow: 0 0 0 8px rgba(16, 185, 129, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+        }
+
+        @keyframes pulse-rose {
+            0% { box-shadow: 0 0 0 0 rgba(244, 63, 94, 0.4); }
+            70% { box-shadow: 0 0 0 8px rgba(244, 63, 94, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(244, 63, 94, 0); }
+        }
+
+        @keyframes bounce {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-6px); }
+        }
+    </style>
+</head>
+<body>
+
+    <header>
+        <div class="logo-container">
+            <div class="logo-icon"></div>
+            <h1>go-watchdog System</h1>
+        </div>
+        <div class="system-status-indicator">
+            <div class="pulse-dot"></div>
+            <span>Dashboard Active</span>
+        </div>
+    </header>
+
+    <main>
+        <section class="grid-container" id="dashboard-grid">
+            <!-- Loading or empty state -->
+            <div class="no-data" id="empty-state">
+                <div class="no-data-icon">🛰️</div>
+                <div class="no-data-text">에이전트 연결 대기 중</div>
+                <div class="no-data-hint">등록된 모니터링 서버가 없습니다. go-watchdog 에이전트를 가동하면 자동으로 수집이 시작됩니다.</div>
+            </div>
+        </section>
+    </main>
+
+    <footer>
+        <p>© 2026 go-watchdog. Built with Go & SQLite. Real-time Infrastructure Monitoring.</p>
+    </footer>
+
+    <script>
+        const grid = document.getElementById('dashboard-grid');
+        const emptyState = document.getElementById('empty-state');
+
+        // Format relative time (e.g. 5 seconds ago)
+        function formatRelativeTime(timestampStr) {
+            const date = new Date(timestampStr);
+            const now = new Date();
+            const diffSeconds = Math.floor((now - date) / 1000);
+
+            if (isNaN(diffSeconds)) return '시간 모름';
+            if (diffSeconds < 5) return '방금 전';
+            if (diffSeconds < 60) return `${diffSeconds}초 전`;
+            
+            const diffMinutes = Math.floor(diffSeconds / 60);
+            return `${diffMinutes}분 전`;
+        }
+
+        // Get progress bar color class based on percentage
+        function getProgressBarClass(percent) {
+            if (percent >= 90) return 'progress-bar bar-danger';
+            if (percent >= 70) return 'progress-bar bar-warn';
+            return 'progress-bar bar-normal';
+        }
+
+        // Create HTML string for a single Disk
+        function createDiskHTML(disk) {
+            const diskClass = getProgressBarClass(disk.percent);
+            return `
+                <div class="metric-group">
+                    <div class="metric-header">
+                        <span class="metric-label" style="font-size:0.8rem; color:var(--text-secondary); font-weight:500;">
+                            📂 ${disk.path} (${disk.used_gb.toFixed(1)} / ${disk.total_gb.toFixed(1)} GB)
+                        </span>
+                        <span class="metric-value" style="font-size:0.8rem;">${disk.percent.toFixed(1)}%</span>
+                    </div>
+                    <div class="progress-container" style="height: 6px;">
+                        <div class="${diskClass}" style="width: ${disk.percent}%"></div>
+                    </div>
+                </div>
+            `;
+        }
+
+        // Update values of an existing card in place to prevent layout flicker
+        function updateCard(cardElement, agent) {
+            const isOnline = agent.status === 'ONLINE';
+            
+            // Handle card border state
+            if (isOnline) {
+                cardElement.classList.remove('offline-state');
+            } else {
+                cardElement.classList.add('offline-state');
+            }
+
+            // Update Status Badge
+            const badge = cardElement.querySelector('.status-badge');
+            if (isOnline) {
+                badge.className = 'status-badge online';
+                badge.innerHTML = '<div class="badge-dot"></div>Online';
+            } else {
+                badge.className = 'status-badge offline';
+                badge.innerHTML = '<div class="badge-dot"></div>Offline';
+            }
+
+            // Update Last Seen text
+            const lastSeenText = isOnline 
+                ? `마지막 응답: ${formatRelativeTime(agent.timestamp)}` 
+                : `장비 오프라인 (${formatRelativeTime(agent.timestamp)})`;
+            cardElement.querySelector('.last-seen').textContent = lastSeenText;
+
+            // Update CPU usage
+            const cpuVal = cardElement.querySelector('.cpu-val');
+            cpuVal.textContent = `${agent.cpu_percent.toFixed(1)}%`;
+            const cpuBar = cardElement.querySelector('.cpu-bar');
+            cpuBar.className = 'cpu-bar ' + getProgressBarClass(agent.cpu_percent);
+            cpuBar.style.width = `${agent.cpu_percent}%`;
+
+            // Update RAM usage
+            const ramVal = cardElement.querySelector('.ram-val');
+            ramVal.textContent = `${agent.mem_percent.toFixed(1)}% (${agent.mem_used_gb.toFixed(1)} / ${agent.mem_total_gb.toFixed(1)} GB)`;
+            const ramBar = cardElement.querySelector('.ram-bar');
+            ramBar.className = 'ram-bar ' + getProgressBarClass(agent.mem_percent);
+            ramBar.style.width = `${agent.mem_percent}%`;
+
+            // Update Disk drive list (re-render disk sub-grid to match configuration)
+            const diskGrid = cardElement.querySelector('.disk-grid');
+            if (agent.disks && agent.disks.length > 0) {
+                diskGrid.innerHTML = agent.disks.map(createDiskHTML).join('');
+            } else {
+                diskGrid.innerHTML = '<p style="font-size:0.8rem; color:var(--text-muted);">디스크 정보 없음</p>';
+            }
+        }
+
+        // Create a new card from scratch
+        function createCard(agent) {
+            const card = document.createElement('article');
+            card.className = 'server-card';
+            card.setAttribute('data-agent-id', agent.agent_id);
+
+            const isOnline = agent.status === 'ONLINE';
+            if (!isOnline) {
+                card.classList.add('offline-state');
+            }
+
+            const badgeClass = isOnline ? 'online' : 'offline';
+            const badgeLabel = isOnline ? 'Online' : 'Offline';
+            const lastSeenText = isOnline 
+                ? `마지막 응답: ${formatRelativeTime(agent.timestamp)}` 
+                : `장비 오프라인 (${formatRelativeTime(agent.timestamp)})`;
+
+            card.innerHTML = `
+                <div class="card-header">
+                    <div class="agent-info">
+                        <span class="agent-id">${agent.agent_id}</span>
+                        <span class="last-seen">${lastSeenText}</span>
+                    </div>
+                    <div class="status-badge ${badgeClass}">
+                        <div class="badge-dot"></div>
+                        ${badgeLabel}
+                    </div>
+                </div>
+                <div class="card-content">
+                    <div class="metric-group">
+                        <div class="metric-header">
+                            <span class="metric-label">💻 CPU 사용률</span>
+                            <span class="metric-value cpu-val">${agent.cpu_percent.toFixed(1)}%</span>
+                        </div>
+                        <div class="progress-container">
+                            <div class="cpu-bar" style="width: 0%"></div>
+                        </div>
+                    </div>
+                    <div class="metric-group">
+                        <div class="metric-header">
+                            <span class="metric-label">🧠 메모리 사용량</span>
+                            <span class="metric-value ram-val">${agent.mem_percent.toFixed(1)}% (${agent.mem_used_gb.toFixed(1)} / ${agent.mem_total_gb.toFixed(1)} GB)</span>
+                        </div>
+                        <div class="progress-container">
+                            <div class="ram-bar" style="width: 0%"></div>
+                        </div>
+                    </div>
+                </div>
+                <div class="disk-section">
+                    <div class="disk-title">Storage Partition Status</div>
+                    <div class="disk-grid">
+                        ${agent.disks && agent.disks.length > 0 
+                            ? agent.disks.map(createDiskHTML).join('') 
+                            : '<p style="font-size:0.8rem; color:var(--text-muted);">디스크 정보 없음</p>'}
+                    </div>
+                </div>
+            `;
+
+            grid.appendChild(card);
+
+            // Animate progress bar widths on insertion
+            setTimeout(() => {
+                const cpuBar = card.querySelector('.cpu-bar');
+                cpuBar.className = 'cpu-bar ' + getProgressBarClass(agent.cpu_percent);
+                cpuBar.style.width = `${agent.cpu_percent}%`;
+
+                const ramBar = card.querySelector('.ram-bar');
+                ramBar.className = 'ram-bar ' + getProgressBarClass(agent.mem_percent);
+                ramBar.style.width = `${agent.mem_percent}%`;
+            }, 100);
+        }
+
+        // Fetch agents status from server
+        async function fetchStatus() {
+            try {
+                const response = await fetch('/api/status');
+                if (!response.ok) {
+                    throw new Error(`Server returned status: ${response.status}`);
+                }
+                const agents = await response.json();
+
+                if (!agents || agents.length === 0) {
+                    if (emptyState) emptyState.style.display = 'flex';
+                    // Remove any existing cards
+                    document.querySelectorAll('.server-card').forEach(card => card.remove());
+                    return;
+                }
+
+                if (emptyState) emptyState.style.display = 'none';
+
+                // Keep track of active agent ids to clean up removed agents later
+                const currentAgentIds = new Set(agents.map(a => a.agent_id));
+
+                // Process agents and update/create cards
+                agents.forEach(agent => {
+                    const existingCard = document.querySelector(`.server-card[data-agent-id="${agent.agent_id}"]`);
+                    if (existingCard) {
+                        updateCard(existingCard, agent);
+                    } else {
+                        createCard(agent);
+                    }
+                });
+
+                // Remove cards for agents that are no longer returned by the server
+                document.querySelectorAll('.server-card').forEach(card => {
+                    const id = card.getAttribute('data-agent-id');
+                    if (!currentAgentIds.has(id)) {
+                        card.style.opacity = '0';
+                        card.style.transform = 'scale(0.9)';
+                        setTimeout(() => card.remove(), 300);
+                    }
+                });
+
+            } catch (error) {
+                console.error('[Dashboard] Status fetch failed:', error);
+                // Modify system status bar to warn
+                const statusSpan = document.querySelector('.system-status-indicator span');
+                const statusDot = document.querySelector('.pulse-dot');
+                if (statusSpan && statusDot) {
+                    statusSpan.textContent = 'API Connection Error';
+                    statusSpan.style.color = 'var(--color-rose)';
+                    statusDot.style.backgroundColor = 'var(--color-rose)';
+                }
+            }
+        }
+
+        // Run fetch on load and schedule every 5 seconds
+        fetchStatus();
+        setInterval(fetchStatus, 5000);
+    </script>
+</body>
+</html>
