@@ -22,7 +22,7 @@ bin/
 /server/monitoring.db
 
 # Configuration files (containing secrets)
-/agent/config.json
+/agent/config*.json
 /server/config.json
 
 # IDEs and editors
