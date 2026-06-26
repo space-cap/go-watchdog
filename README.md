@@ -45,13 +45,13 @@
 $env:Path = "H:\Program Files\Go\bin;" + $env:Path
 
 # 서버 바이너리 빌드
-go build -o server.exe ./server
+go build -o bin/server.exe ./server
 ```
 
 ### 3.2. 에이전트 빌드
 ```powershell
 # 에이전트 바이너리 빌드
-go build -o agent.exe ./agent
+go build -o bin/agent.exe ./agent
 ```
 
 ---
@@ -62,10 +62,10 @@ go build -o agent.exe ./agent
 서버는 수집 포트(`9090`), 보안 토큰값, DB 경로 및 데이터 보존 기한을 파라미터로 받아 시작합니다.
 ```powershell
 # 기본 설정값으로 구동 (포트 9090, monitoring.db 생성)
-.\server.exe
+.\bin\server.exe
 
 # 사용자 정의 인자로 구동
-.\server.exe -port 9090 -token watchdog-secret-token -db monitoring.db -retention 14
+.\bin\server.exe -port 9090 -token watchdog-secret-token -db monitoring.db -retention 14
 ```
 
 ### 4.2. 에이전트 설정 및 실행
@@ -84,10 +84,10 @@ go build -o agent.exe ./agent
 * **실행:**
 ```powershell
 # 에이전트 실행 (기본값 config.json 로드)
-.\agent.exe
+.\bin\agent.exe
 
 # 다른 경로의 설정 파일 지정 시
-.\agent.exe -config agent/config.json
+.\bin\agent.exe -config agent/config.json
 ```
 
 에이전트가 가동되면 콘솔에 수집 보고 메시지가 출력되며, 웹 브라우저로 `http://localhost:9090`에 접속하여 실시간 차트를 조회할 수 있습니다.
