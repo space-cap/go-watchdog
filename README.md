@@ -59,13 +59,31 @@ go build -o bin/agent.exe ./agent
 ## 4. 구동 가이드
 
 ### 4.1. 서버 실행
-서버는 수집 포트(`9090`), 보안 토큰값, DB 경로 및 데이터 보존 기한을 파라미터로 받아 시작합니다.
-```powershell
-# 기본 설정값으로 구동 (포트 9090, monitoring.db 생성)
-.\bin\server.exe
+서버는 설정 파일(`server/config.json`)을 기반으로 동작하며, 명령줄 인자(CLI Flags)로 개별 설정값을 덮어쓸(Override) 수 있습니다.
 
-# 사용자 정의 인자로 구동
-.\bin\server.exe -port 9090 -token watchdog-secret-token -db monitoring.db -retention 14
+* **설정 템플릿 (`server/config.json`):**
+```json
+{
+  "port": 9090,
+  "auth_token": "watchdog-secret-token",
+  "db_path": "monitoring.db",
+  "retention_days": 14
+}
+```
+
+* **설정 필드 설명:**
+  * `port` (기본값: `9090`): 서버가 수신 대기할 TCP 포트 번호.
+  * `auth_token` (기본값: `watchdog-secret-token`): 에이전트 인증을 위한 보안용 API Key 토큰.
+  * `db_path` (기본값: `monitoring.db`): 모니터링 메트릭 정보를 저장할 SQLite 파일 경로.
+  * `retention_days` (기본값: `14`): 메트릭 수집 정보 보존 기한 (단위: 일). 초과된 데이터는 자동 청소됩니다.
+
+* **실행 명령어:**
+```powershell
+# 기본값 또는 config.json 설정으로 구동
+.\bin\server.exe -config server/config.json
+
+# 특정 설정값을 명령줄 인수로 덮어쓰며 구동 (명령줄 설정 우선)
+.\bin\server.exe -config server/config.json -port 9090 -retention 30
 ```
 
 ### 4.2. 에이전트 설정 및 실행
