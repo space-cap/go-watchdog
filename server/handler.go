@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"go-watchdog/common"
@@ -36,6 +37,21 @@ func (s *Server) ServeDashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Check if token query param matches admin token
+	tokenParam := r.URL.Query().Get("token")
+	if tokenParam == s.authToken {
+		http.SetCookie(w, &http.Cookie{
+			Name:     "session_token",
+			Value:    s.authToken,
+			Path:     "/",
+			HttpOnly: true, // Prevent XSS theft
+			MaxAge:   86400, // 1 day
+		})
+		// Redirect to root without query param to clean browser URL
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
+
 	htmlContent, err := templatesFS.ReadFile("templates/dashboard.html")
 	if err != nil {
 		log.Printf("[Server] [Error] Failed to read embedded dashboard.html: %v", err)
@@ -43,8 +59,25 @@ func (s *Server) ServeDashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Inject IS_ADMIN flag script
+	isAdminStr := "false"
+	if s.isAdmin(r) {
+		isAdminStr = "true"
+	}
+	flagScript := fmt.Sprintf("<script>const IS_ADMIN = %s;</script>", isAdminStr)
+	injectedHTML := strings.Replace(string(htmlContent), "<!-- ADMIN_FLAG -->", flagScript, 1)
+
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Write(htmlContent)
+	w.Write([]byte(injectedHTML))
+}
+
+// isAdmin checks if the request has a valid admin session cookie.
+func (s *Server) isAdmin(r *http.Request) bool {
+	cookie, err := r.Cookie("session_token")
+	if err != nil {
+		return false
+	}
+	return cookie.Value == s.authToken
 }
 
 // TokenAuthMiddleware authenticates agent report requests by verifying the X-Agent-Token header.
@@ -181,6 +214,11 @@ func (s *Server) HandlePostHealthTarget(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	if !s.isAdmin(r) {
+		http.Error(w, "Unauthorized: Admin session required", http.StatusUnauthorized)
+		return
+	}
+
 	var req struct {
 		Name            string `json:"name"`
 		URL             string `json:"url"`
@@ -227,6 +265,11 @@ func (s *Server) HandlePostHealthTarget(w http.ResponseWriter, r *http.Request) 
 func (s *Server) HandleDeleteHealthTarget(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodDelete {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if !s.isAdmin(r) {
+		http.Error(w, "Unauthorized: Admin session required", http.StatusUnauthorized)
 		return
 	}
 
@@ -281,6 +324,10 @@ func (s *Server) HandleGetHealthStatus(w http.ResponseWriter, r *http.Request) {
 		var status HealthTargetStatus
 		if err := rows.Scan(&status.ID, &status.Name, &status.URL, &status.Interval); err != nil {
 			continue
+		}
+
+		if !s.isAdmin(r) {
+			status.URL = "Hidden (Admin Only)"
 		}
 
 		var logID int64

@@ -8,6 +8,11 @@ const btnCloseRegister = document.getElementById('btn-close-register');
 const btnCancelRegister = document.getElementById('btn-cancel-register');
 const registerForm = document.getElementById('register-form');
 
+// Hide API registration button if not admin
+if (typeof IS_ADMIN !== 'undefined' && !IS_ADMIN) {
+    btnOpenRegister.style.display = 'none';
+}
+
 const healthGrid = document.getElementById('health-grid');
 const healthEmptyState = document.getElementById('health-empty-state');
 
@@ -200,12 +205,24 @@ function createAPICard(target) {
         ? '첫 체크 대기 중...' 
         : `최근 점검: ${new Date(target.last_check).toLocaleTimeString()}`;
 
+    const isAdmin = typeof IS_ADMIN !== 'undefined' ? IS_ADMIN : false;
+    
+    // URL 표시 형태 결정 (비인증 시 링크 차단 및 텍스트 렌더링)
+    const urlHTML = isAdmin 
+        ? `<a href="${target.url}" target="_blank" style="color:var(--color-blue); text-decoration:none;">${target.url}</a>`
+        : `<span style="color:var(--text-muted); cursor:default;">${target.url}</span>`;
+        
+    // 삭제 버튼 표시 여부
+    const deleteButtonHTML = isAdmin 
+        ? `<button class="btn-delete" title="대상 삭제">🗑️</button>` 
+        : '';
+
     card.innerHTML = `
         <div class="card-header">
             <div class="agent-info">
                 <span class="agent-id" style="font-size:1.05rem;">${target.name}</span>
                 <span class="last-seen" style="font-size:0.75rem; word-break:break-all; max-width:280px;">
-                    <a href="${target.url}" target="_blank" style="color:var(--color-blue); text-decoration:none;">${target.url}</a>
+                    ${urlHTML}
                 </span>
             </div>
             <div style="display:flex; align-items:center; gap:0.5rem;">
@@ -213,7 +230,7 @@ function createAPICard(target) {
                     <div class="badge-dot"></div>
                     ${badgeLabel}
                 </div>
-                <button class="btn-delete" title="대상 삭제">🗑️</button>
+                ${deleteButtonHTML}
             </div>
         </div>
         <div class="card-content" style="gap:0.75rem;">
@@ -237,10 +254,12 @@ function createAPICard(target) {
         </div>
     `;
 
-    // Bind delete event
-    card.querySelector('.btn-delete').addEventListener('click', () => {
-        deleteTarget(target.id, target.name);
-    });
+    // Bind delete event only if admin
+    if (isAdmin) {
+        card.querySelector('.btn-delete').addEventListener('click', () => {
+            deleteTarget(target.id, target.name);
+        });
+    }
 
     // Error Message Box
     if (target.status === 'OFFLINE' && target.error_message) {
