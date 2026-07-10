@@ -96,3 +96,120 @@ New-NetFirewallRule -Name "GoWatchdogIngress" -DisplayName "go-watchdog Ingress 
    Test-NetConnection -ComputerName [수집서버IP] -Port 9090
    ```
    반환 결과가 `TcpTestSucceeded : True`여야 합니다.
+
+---
+
+## 4. Oracle Cloud Infrastructure (Ubuntu) 배포 가이드
+
+오라클 클라우드(OCI)의 우분투 가상 머신(VM) 환경에 `go-watchdog` 수집 서버를 배포하고 영구 가동하기 위한 방화벽 및 시스템 서비스 설정 가이드입니다.
+
+### 4.1. Linux용 바이너리 크로스 컴파일
+개발 PC(Windows) 환경에서 Linux(Ubuntu) 환경으로 배포하기 위한 실행 파일을 빌드합니다.
+PowerShell 세션에서 다음 명령어를 실행합니다.
+
+```powershell
+# 리눅스 타겟 크로스 컴파일 설정 및 빌드
+$env:GOOS="linux"
+$env:GOARCH="amd64"
+go build -o bin/server ./server
+
+# 빌드 완료 후 빌드 상태 원복
+$env:GOOS=""
+$env:GOARCH=""
+```
+빌드가 완료되면 `bin/server` 실행 파일(확장자 없음)이 생성됩니다. 이 파일을 FTP/SFTP 등을 통해 우분투 서버의 배포 경로(예: `/opt/go-watchdog/`)로 전송합니다.
+
+### 4.2. Oracle Cloud 인프라 보안 규칙(방화벽) 설정
+오라클 클라우드는 기본적으로 가상 네트워크(VCN) 인프라 레벨에서 포트가 차단되어 있습니다. 포트 허용 규칙을 가장 먼저 구성해야 합니다.
+
+1. **오라클 클라우드 콘솔**에 로그인합니다.
+2. 배포 대상 인스턴스 상세 정보 화면으로 이동하여 **[기본 가상 클라우드 네트워크(VCN)]** 링크를 클릭합니다.
+3. 왼쪽 메뉴에서 **[보안 목록(Security Lists)]**을 선택하고, 사용 중인 기본 보안 목록을 클릭합니다.
+4. **[수신 규칙 추가(Add Ingress Rules)]** 버튼을 클릭합니다.
+5. 아래와 같이 설정한 뒤 **[수신 규칙 추가]**를 클릭합니다.
+   * **소스 유형:** `CIDR`
+   * **소스 CIDR:** `0.0.0.0/0` (또는 에이전트들이 위치한 특정 IP 대역)
+   * **IP 프로토콜:** `TCP`
+   * **대상 포트 범위:** `9090` (설정한 포트 번호)
+   * **설명:** `go-watchdog web and ingest api port`
+
+### 4.3. Ubuntu OS 내부 방화벽 설정
+오라클 클라우드의 우분투 이미지는 기본적으로 `iptables` 규칙이 엄격하게 바인딩되어 있어, 단순히 `ufw`를 켜는 것만으로는 포트가 열리지 않습니다. OS 내부에서 아래 명령어를 실행하여 포트를 완전 허용해 주어야 합니다.
+
+```bash
+# OS 내부로 SSH 접속 후 실행
+# 1. iptables 규칙의 수신 허용 목록에 9090 포트 추가 (우선순위 상위에 적용하기 위해 -I INPUT 6 사용)
+sudo iptables -I INPUT 6 -p tcp --dport 9090 -j ACCEPT
+
+# 2. 변경된 iptables 규칙 영구 저장 (재부팅 시 초기화 방지)
+sudo netfilter-persistent save
+```
+> [!NOTE]
+> 만약 서버에서 `ufw` 방화벽을 주로 사용 중인 환경이라면 아래 명령어를 추가로 수행합니다.
+> ```bash
+> sudo ufw allow 9090/tcp
+> ```
+
+### 4.4. systemd 서비스 등록 및 백그라운드 영구 구동
+서버 재부팅 시에도 자동으로 `go-watchdog` 서버가 가동되고 백그라운드에서 상시 돌도록 Linux 표준 데몬 관리인 `systemd` 서비스로 등록합니다.
+
+#### 1) 배포 디렉토리 세팅 및 실행 권한 부여
+```bash
+# 1. 서비스가 동작할 전용 디렉토리 생성 및 설정 파일 복사
+sudo mkdir -p /opt/go-watchdog
+sudo cp server/config.json /opt/go-watchdog/config.json
+
+# 2. 컴파일하여 전송한 server 실행 바이너리를 디렉토리로 이동 및 실행 권한 추가
+sudo mv server /opt/go-watchdog/server
+sudo chmod +x /opt/go-watchdog/server
+```
+
+#### 2) systemd 서비스 파일 작성
+`/etc/systemd/system/go-watchdog.service` 파일을 생성하고 아래 설정을 입력합니다.
+
+```ini
+[Unit]
+Description=Go-Watchdog Resource and Health Monitor Server
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/go-watchdog
+ExecStart=/opt/go-watchdog/server -config /opt/go-watchdog/config.json
+Restart=always
+RestartSec=5
+StandardOutput=append:/var/log/go-watchdog.log
+StandardError=append:/var/log/go-watchdog.err.log
+
+[Install]
+WantedBy=multi-user.target
+```
+
+#### 3) 서비스 활성화 및 시작
+```bash
+# 1. 새 서비스 파일 등록 반영
+sudo systemctl daemon-reload
+
+# 2. 서비스 시작 및 상태 확인
+sudo systemctl start go-watchdog.service
+sudo systemctl status go-watchdog.service
+
+# 3. 서버 부팅 시 자동 시작 등록
+sudo systemctl enable go-watchdog.service
+```
+
+#### 4) 서비스 제어 명령어 목록
+```bash
+# 서비스 상태 확인
+sudo systemctl status go-watchdog
+
+# 서비스 중지
+sudo systemctl stop go-watchdog
+
+# 서비스 재시작 (설정 변경 시 등)
+sudo systemctl restart go-watchdog
+
+# 로그 실시간 관제
+tail -f /var/log/go-watchdog.log
+```
