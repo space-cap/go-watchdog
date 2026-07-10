@@ -154,6 +154,11 @@ func (hr *HealthRunner) checkTarget(t HealthTarget) {
 		prevStatus = hr.getLatestStatusFromDB(t.ID)
 		if prevStatus != "" {
 			hr.statusCache[t.ID] = prevStatus
+		} else {
+			// 최초 등록되어 이전 상태 이력이 없는 타겟은
+			// 기본 상태를 "ONLINE"으로 가정하여 첫 감시 실패 시 즉각 알림이 가도록 조치
+			prevStatus = "ONLINE"
+			hr.statusCache[t.ID] = prevStatus
 		}
 	}
 	hr.cacheMutex.Unlock()
