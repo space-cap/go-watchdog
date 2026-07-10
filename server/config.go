@@ -11,6 +11,8 @@ type Config struct {
 	AuthToken     string `json:"auth_token"`     // Secret API Key required for agents report
 	DBPath        string `json:"db_path"`        // SQLite database file path
 	RetentionDays int    `json:"retention_days"` // Days to retain metrics in the database
+	SlackWebhookURL   string `json:"slack_webhook_url"`   // Slack incoming webhook URL
+	DiscordWebhookURL string `json:"discord_webhook_url"` // Discord incoming webhook URL
 }
 
 // LoadConfig reads the server configuration from the specified JSON file.

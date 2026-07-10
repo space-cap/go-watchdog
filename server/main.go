@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io/fs"
 	"log"
 	"net/http"
 	"os"
@@ -19,6 +20,8 @@ func main() {
 	token := flag.String("token", "", "Authorization token for agent data reporting (overrides config)")
 	dbPath := flag.String("db", "", "SQLite database file location (overrides config)")
 	retentionDays := flag.Int("retention", 0, "Metric data storage retention limit in days (overrides config)")
+	slackWebhook := flag.String("slack", "", "Slack incoming webhook URL (overrides config)")
+	discordWebhook := flag.String("discord", "", "Discord incoming webhook URL (overrides config)")
 	flag.Parse()
 
 	log.Println("[Server] Initializing go-watchdog backend server...")
@@ -54,6 +57,10 @@ func main() {
 			cfg.DBPath = *dbPath
 		case "retention":
 			cfg.RetentionDays = *retentionDays
+		case "slack":
+			cfg.SlackWebhookURL = *slackWebhook
+		case "discord":
+			cfg.DiscordWebhookURL = *discordWebhook
 		}
 	})
 
@@ -74,10 +81,35 @@ func main() {
 	// 4. Setup Server Handler
 	srv := NewServer(db, cfg.AuthToken)
 
+	staticFS, err := fs.Sub(templatesFS, "templates")
+	if err != nil {
+		log.Fatalf("[Server] [Fatal] Failed to create static sub-filesystem: %v", err)
+	}
+
+	// Start Health Check Runner
+	notifier := NewNotifier(cfg.SlackWebhookURL, cfg.DiscordWebhookURL)
+	healthRunner := NewHealthRunner(db, notifier)
+	healthRunner.Start()
+	defer healthRunner.Stop()
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", srv.ServeDashboard)
+	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))))
 	mux.HandleFunc("/api/status", srv.HandleGetStatus)
 	mux.HandleFunc("/api/metrics", srv.TokenAuthMiddleware(srv.HandlePostMetrics))
+	mux.HandleFunc("/api/health/status", srv.HandleGetHealthStatus)
+	mux.HandleFunc("/api/health/targets", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			srv.HandleGetHealthTargets(w, r)
+		case http.MethodPost:
+			srv.HandlePostHealthTarget(w, r)
+		case http.MethodDelete:
+			srv.HandleDeleteHealthTarget(w, r)
+		default:
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
 
 	httpServer := &http.Server{
 		Addr:    fmt.Sprintf(":%d", cfg.Port),

@@ -75,6 +75,46 @@ func InitDB(dbPath string) (*sql.DB, error) {
 		return nil, fmt.Errorf("failed to create index: %w", err)
 	}
 
+	// Create health_targets table
+	queryCreateHealthTargetsTable := `
+	CREATE TABLE IF NOT EXISTS health_targets (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		name TEXT NOT NULL,
+		url TEXT NOT NULL UNIQUE,
+		interval_seconds INTEGER NOT NULL DEFAULT 60,
+		timeout_seconds INTEGER NOT NULL DEFAULT 5,
+		is_active INTEGER NOT NULL DEFAULT 1,
+		created_at DATETIME NOT NULL
+	);`
+	if _, err := db.Exec(queryCreateHealthTargetsTable); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("failed to create health_targets table: %w", err)
+	}
+
+	// Create health_logs table
+	queryCreateHealthLogsTable := `
+	CREATE TABLE IF NOT EXISTS health_logs (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		target_id INTEGER NOT NULL,
+		status_code INTEGER,
+		latency_ms INTEGER,
+		is_success INTEGER NOT NULL,
+		error_message TEXT,
+		timestamp DATETIME NOT NULL,
+		FOREIGN KEY(target_id) REFERENCES health_targets(id) ON DELETE CASCADE
+	);`
+	if _, err := db.Exec(queryCreateHealthLogsTable); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("failed to create health_logs table: %w", err)
+	}
+
+	// Create index for health_logs to speed up status query
+	queryCreateHealthLogsIndex := `CREATE INDEX IF NOT EXISTS idx_health_logs_target_time ON health_logs(target_id, timestamp DESC);`
+	if _, err := db.Exec(queryCreateHealthLogsIndex); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("failed to create health_logs index: %w", err)
+	}
+
 	return db, nil
 }
 
@@ -177,7 +217,7 @@ func getDiskMetricsForID(db *sql.DB, metricID int64) ([]common.DiskInfo, error) 
 	return disks, nil
 }
 
-// CleanupOldMetrics deletes all metric records that are older than the specified retention days.
+// CleanupOldMetrics deletes all metric and health check records that are older than the specified retention days.
 // Relies on SQLite ON DELETE CASCADE to automatically clean up disk_metrics entries.
 func CleanupOldMetrics(db *sql.DB, retentionDays int) (int64, error) {
 	cutoff := time.Now().AddDate(0, 0, -retentionDays)
@@ -189,5 +229,17 @@ func CleanupOldMetrics(db *sql.DB, retentionDays int) (int64, error) {
 		return 0, fmt.Errorf("failed to clean up old metrics: %w", err)
 	}
 
-	return res.RowsAffected()
+	affectedMetrics, _ := res.RowsAffected()
+
+	res2, err := db.Exec(`
+		DELETE FROM health_logs
+		WHERE timestamp < ?
+	`, cutoff)
+	if err != nil {
+		return affectedMetrics, fmt.Errorf("failed to clean up old health logs: %w", err)
+	}
+
+	affectedLogs, _ := res2.RowsAffected()
+
+	return affectedMetrics + affectedLogs, nil
 }
