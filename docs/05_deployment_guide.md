@@ -107,19 +107,87 @@ New-NetFirewallRule -Name "GoWatchdogIngress" -DisplayName "go-watchdog Ingress 
 개발 PC(Windows) 환경에서 Linux(Ubuntu) 환경으로 배포하기 위한 실행 파일을 빌드합니다.
 PowerShell 세션에서 다음 명령어를 실행합니다.
 
+```cmd
+:: 1. 리눅스 환경 변수 설정
+set GOOS=linux
+set GOARCH=amd64
+
+:: 2. 수집 서버 빌드 (bin/server 바이너리 파일 생성)
+go build -o bin/server ./server
+
+:: 3. 자원 수집 에이전트 빌드 (bin/agent 바이너리 파일 생성)
+go build -o bin/agent ./agent
+
+:: 4. 환경 변수 초기화 (선택 사항)
+set GOOS=
+set GOARCH=
+```
+
+#### 2) Windows 10 PowerShell에서 빌드할 때
+PowerShell 창을 열고 프로젝트 루트 디렉토리에서 아래 명령어를 실행합니다.
+
 ```powershell
-# 리눅스 타겟 크로스 컴파일 설정 및 빌드
 $env:GOOS="linux"
 $env:GOARCH="amd64"
 go build -o bin/server ./server
-
-# 빌드 완료 후 빌드 상태 원복
+go build -o bin/agent ./agent
 $env:GOOS=""
 $env:GOARCH=""
 ```
-빌드가 완료되면 `bin/server` 실행 파일(확장자 없음)이 생성됩니다. 이 파일을 FTP/SFTP 등을 통해 우분투 서버의 배포 경로(예: `/opt/go-watchdog/`)로 전송합니다.
 
-### 4.2. Oracle Cloud 인프라 보안 규칙(방화벽) 설정
+#### 3) 빌드된 파일을 SCP 명령어로 우분투 서버에 전송
+윈도우 10 CMD 또는 PowerShell에서 `scp` 명령어를 이용하여 빌드 완료된 리눅스용 바이너리를 우분투 서버의 지정 디렉토리(`~/go-watchdog/`)로 다이렉트 전송할 수 있습니다. (오라클 클라우드의 SSH 접속용 프라이빗 키 `.key` 또는 `.pem` 파일 경로를 적어줍니다.)
+
+```cmd
+:: 윈도우 CMD/PowerShell에서 우분투 서버의 사용자 홈 디렉토리 경로로 전송
+scp -i "C:\path\to\your-oracle-key.pem" bin/server ubuntu@<우분투_서버_IP>:~/go-watchdog/server
+scp -i "C:\path\to\your-oracle-key.pem" bin/agent ubuntu@<우분투_서버_IP>:~/go-watchdog/agent
+```
+
+---
+
+### 4.2. 우분투 서버에서 배포 및 덮어쓰기 적용
+
+우분투 서버에서 이미 수집 서버(`server`)나 에이전트(`agent`)가 실행 중인 상태에서는 파일이 실행 상태로 잠겨 있어 덮어쓰기 시 `text file busy` 오류가 발생합니다. 따라서 반드시 실행 중인 기존 프로세스를 중지한 뒤 덮어써야 합니다.
+
+#### 1) 기존 구동 중인 프로세스 중지
+* **systemd 서비스로 구동 중인 경우:**
+  ```bash
+  sudo systemctl stop go-watchdog
+  ```
+* **수동으로 백그라운드(`nohup`) 실행 중인 경우:**
+  ```bash
+  pkill -f server
+  # 또는
+  killall server
+  ```
+
+#### 2) 실행 권한 부여 및 덮어쓰기
+전송받은 바이너리를 덮어쓴 후 실행이 가능하도록 실행 권한을 명시적으로 부여합니다.
+```bash
+# 1. 전송 받은 실행 바이너리에 실행 권한 부여
+chmod +x ~/go-watchdog/server
+chmod +x ~/go-watchdog/agent
+
+# 2. 만약 /opt/go-watchdog/ 등 시스템 공용 경로에 배포하여 구동하는 환경인 경우 덮어쓰기 복사 진행
+sudo cp ~/go-watchdog/server /opt/go-watchdog/server
+sudo cp ~/go-watchdog/agent /opt/go-watchdog/agent
+```
+
+#### 3) 프로세스 재기동
+* **systemd 서비스로 구동하는 경우:**
+  ```bash
+  sudo systemctl start go-watchdog
+  ```
+* **수동으로 백그라운드(`nohup`) 실행하는 경우:**
+  ```bash
+  cd ~/go-watchdog
+  nohup ./server -config config.json > server.log 2>&1 &
+  ```
+
+---
+
+### 4.3. Oracle Cloud 인프라 보안 규칙(방화벽) 설정
 오라클 클라우드는 기본적으로 가상 네트워크(VCN) 인프라 레벨에서 포트가 차단되어 있습니다. 포트 허용 규칙을 가장 먼저 구성해야 합니다.
 
 1. **오라클 클라우드 콘솔**에 로그인합니다.
