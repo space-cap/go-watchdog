@@ -1,6 +1,6 @@
 # [배포 매뉴얼] Windows CMD 환경에서의 리눅스 빌드 및 업로드 가이드
 
-본 문서는 Windows 10 개발 PC의 **명령 프롬프트(CMD)** 환경에서 수집 서버(`server`)를 Linux(Ubuntu)용으로 크로스 컴파일 빌드하고, SCP 전송을 통해 오라클 클라우드 원격 서버로 배포 및 안전 교체(Hot-swap)하는 단계별 가이드를 제공합니다.
+본 문서는 Windows 10 개발 PC의 **명령 프롬프트(CMD)** 환경에서 수집 서버(`watchdog-server`)를 Linux(Ubuntu)용으로 크로스 컴파일 빌드하고, SCP 전송을 통해 오라클 클라우드 원격 서버로 배포 및 안전 교체(Hot-swap)하는 단계별 가이드를 제공합니다.
 
 ---
 
@@ -10,6 +10,7 @@
 * **우분투 서버 IP:** `140.245.64.172`
 * **우분투 서버 계정:** `ubuntu`
 * **배포 대상 디렉토리:** `~/go-watchdog/`
+* **수집 서버 실행 파일명:** `watchdog-server` (기존의 단순 `server` 대신 유니크하게 명명)
 
 ---
 
@@ -20,7 +21,7 @@
 
 1. **우분투 SSH 터미널에서 구동 중인 프로세스 조회:**
    ```bash
-   ps -ef | grep server
+   ps -ef | grep watchdog-server
    ```
 2. **해당 프로세스 ID(PID) 종료:**
    * 출력 내용 중 `go-watchdog` 서버의 프로세스 ID(예: `132206`)를 확인하고 종료시킵니다.
@@ -29,7 +30,7 @@
    ```
    * 프로세스 이름 단위로 깔끔하게 종료하고 싶은 경우 아래 명령을 수행합니다:
    ```bash
-   killall server
+   killall watchdog-server
    ```
 
 ---
@@ -42,8 +43,8 @@ Windows 10 CMD 창을 열고 프로젝트 루트 경로(`H:\lee\go-watchdog`)로
 set GOOS=linux
 set GOARCH=amd64
 
-:: 2. 수집 서버 빌드 (bin/server 바이너리 파일 생성)
-go build -o bin/server ./server
+:: 2. 수집 서버 빌드 (bin/watchdog-server 바이너리 파일 생성)
+go build -o bin/watchdog-server ./server
 
 :: 3. (선택) 에이전트 빌드 필요 시 실행
 go build -o bin/agent ./agent
@@ -52,7 +53,7 @@ go build -o bin/agent ./agent
 set GOOS=
 set GOARCH=
 ```
-* **결과물:** `bin/` 디렉토리에 확장자가 없는 리눅스 실행 파일 `server`가 생성됩니다.
+* **결과물:** `bin/` 디렉토리에 확장자가 없는 리눅스 실행 파일 `watchdog-server`가 생성됩니다.
 
 ---
 
@@ -60,10 +61,10 @@ set GOARCH=
 절대 경로로 지정된 프라이빗 키(`h:\ssh-key-2026-06-19.key`)를 활용하여 빌드된 파일과 설정을 우분투 서버로 안전하게 전송합니다.
 
 ```cmd
-:: 1. 수집 서버 바이너리 업로드
-scp -i h:\ssh-key-2026-06-19.key bin\server ubuntu@140.245.64.172:~/go-watchdog/server
+:: 1. 수집 서버 바이너리 업로드 (watchdog-server 이름으로 업로드)
+scp -i h:\ssh-key-2026-06-19.key bin\watchdog-server ubuntu@140.245.64.172:~/go-watchdog/watchdog-server
 
-:: 2. (선택) 설정 파일 업로드 (웹훅 주소 등 변경 사항이 있을 때만 전송)
+:: 2. 설정 파일 업로드 (웹훅 주소 및 보안 토큰 등 변경 시 전송)
 scp -i h:\ssh-key-2026-06-19.key server\config.json ubuntu@140.245.64.172:~/go-watchdog/config.json
 ```
 
@@ -78,23 +79,37 @@ scp -i h:\ssh-key-2026-06-19.key server\config.json ubuntu@140.245.64.172:~/go-w
    ```
 2. **새 바이너리에 실행 권한 부여:**
    ```bash
-   chmod +x ./server
+   chmod +x ./watchdog-server
    ```
 3. **nohup을 이용한 백그라운드 재기동:**
    * 터미널 세션이 끊겨도 프로세스가 종료되지 않고 로그를 지속 기록하도록 설정합니다.
    ```bash
-   nohup ./server -config config.json > server.log 2>&1 &
+   nohup ./watchdog-server -config config.json > server.log 2>&1 &
    ```
-4. **구동 상태 재검증:**
+4. **구동 상태 및 프로세스 재검증:**
    ```bash
-   ps -ef | grep server
+   ps -ef | grep watchdog-server
    ```
-   * 정상적으로 새로운 프로세스 ID가 부여된 채 실행 중으로 출력되면 배포 작업이 마무리됩니다.
 
 ---
 
-## 3. 트러블슈팅 (Troubleshooting)
+## 3. 배포 완료 후 대시보드 권한별 접속 방법
 
-### Q. `scp: dest open "go-watchdog/server": Failure` 에러가 납니다.
-* **원인:** 우분투 서버에 기존 `server` 프로세스가 아직 활성화되어 파일이 잠겨 있기 때문입니다.
-* **해결책:** **Step 1**을 참조하여 우분투 서버 SSH 터미널에서 `killall server` 또는 `kill [PID]` 명령을 실행하여 구동 중인 프로세스를 확실히 종료한 후 다시 윈도우 CMD에서 `scp` 명령어를 전송해 주세요.
+보안 강화 패치에 따라 배포 완료 후에는 권한 등급에 맞는 방식으로 접속해야 대시보드를 다룰 수 있습니다.
+
+### 3.1 일반 방문자 뷰어 (Viewer) 접속
+등록된 API 정보(URL)를 안전하게 마스킹하고 읽기 전용 상태만 모니터링할 수 있는 접속 경로입니다. (누구나 접속 가능)
+* **접속 주소:** `http://140.245.64.172:9090`
+
+### 3.2 관리자 (Admin) 접속 및 세션 획득
+새로운 헬스체크 대상을 등록하거나 삭제할 수 있는 권한을 얻는 접속 경로입니다. `config.json`에 정의된 `auth_token` 값을 실어서 최초 접근해야 합니다.
+* **접속 주소:** `http://140.245.64.172:9090/?token=YOUR_AUTH_TOKEN_VALUE`
+* **비고:** 최초 접속하여 인증이 완료되면 브라우저에 관리자용 보안 세션 쿠키가 저장되며, 주소창은 자동으로 깔끔하게 기본 도메인 주소로 리다이렉트됩니다.
+
+---
+
+## 4. 트러블슈팅 (Troubleshooting)
+
+### Q. `scp: dest open "go-watchdog/watchdog-server": Failure` 에러가 납니다.
+* **원인:** 우분투 서버에 기존 `watchdog-server` 프로세스가 아직 활성화되어 파일이 잠겨 있기 때문입니다.
+* **해결책:** **Step 1**을 참조하여 우분투 서버 SSH 터미널에서 `killall watchdog-server` 또는 `kill [PID]` 명령을 실행하여 구동 중인 프로세스를 확실히 종료한 후 다시 윈도우 CMD에서 `scp` 명령어를 전송해 주세요.
