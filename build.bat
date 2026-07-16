@@ -15,19 +15,19 @@ if %ERRORLEVEL% neq 0 (
     goto error
 )
 
-echo 2. Building agent (for Windows)...
+echo 2. Building watchdog-agent (for Windows)...
 set GOOS=windows
 set GOARCH=amd64
-go build -o bin/agent.exe ./agent
+go build -o bin/watchdog-agent.exe ./agent
 if %ERRORLEVEL% neq 0 (
     echo [ERROR] Failed to build Windows agent!
     goto error
 )
 
-echo 3. Building agent (for Linux)...
+echo 3. Building watchdog-agent (for Linux)...
 set GOOS=linux
 set GOARCH=amd64
-go build -o bin/agent ./agent
+go build -o bin/watchdog-agent ./agent
 if %ERRORLEVEL% neq 0 (
     echo [ERROR] Failed to build Linux agent!
     goto error
@@ -41,8 +41,8 @@ echo ===================================================
 echo [SUCCESS] Build completed successfully!
 echo Binaries are located in the "bin" directory:
 echo   - bin/watchdog-server (Linux Server)
-echo   - bin/agent.exe (Windows Agent)
-echo   - bin/agent (Linux Agent)
+echo   - bin/watchdog-agent.exe (Windows Agent)
+echo   - bin/watchdog-agent (Linux Agent)
 echo ===================================================
 pause
 exit /b 0
