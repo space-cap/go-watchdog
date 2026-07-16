@@ -120,12 +120,14 @@ func main() {
 	cleanupTicker := time.NewTicker(1 * time.Hour)
 	defer cleanupTicker.Stop()
 
-	// Proactively run an initial cleanup on startup
-	if affected, err := CleanupOldMetrics(db, cfg.RetentionDays); err != nil {
-		log.Printf("[Server] [Warning] Failed to run initial database cleanup: %v", err)
-	} else if affected > 0 {
-		log.Printf("[Server] Startup cleanup deleted %d expired metric records.", affected)
-	}
+	// Proactively run an initial cleanup on startup in a background goroutine
+	go func() {
+		if affected, err := CleanupOldMetrics(db, cfg.RetentionDays); err != nil {
+			log.Printf("[Server] [Warning] Failed to run initial database cleanup: %v", err)
+		} else if affected > 0 {
+			log.Printf("[Server] Startup cleanup deleted %d expired metric records.", affected)
+		}
+	}()
 
 	go func() {
 		log.Println("[Server] Background database retention cleaner daemon started.")

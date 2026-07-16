@@ -81,6 +81,12 @@ func InitDB(dbPath string) (*sql.DB, error) {
 		return nil, fmt.Errorf("failed to create index: %w", err)
 	}
 
+	queryCreateMetricsTimestampIndex := `CREATE INDEX IF NOT EXISTS idx_metrics_timestamp ON metrics(timestamp);`
+	if _, err := db.Exec(queryCreateMetricsTimestampIndex); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("failed to create metrics timestamp index: %w", err)
+	}
+
 	// Create health_targets table
 	queryCreateHealthTargetsTable := `
 	CREATE TABLE IF NOT EXISTS health_targets (
@@ -119,6 +125,12 @@ func InitDB(dbPath string) (*sql.DB, error) {
 	if _, err := db.Exec(queryCreateHealthLogsIndex); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("failed to create health_logs index: %w", err)
+	}
+
+	queryCreateHealthLogsTimestampIndex := `CREATE INDEX IF NOT EXISTS idx_health_logs_timestamp ON health_logs(timestamp);`
+	if _, err := db.Exec(queryCreateHealthLogsTimestampIndex); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("failed to create health_logs timestamp index: %w", err)
 	}
 
 	return db, nil
