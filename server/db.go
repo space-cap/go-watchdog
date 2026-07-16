@@ -12,10 +12,16 @@ import (
 
 // InitDB initializes the SQLite database, sets up tables, and optimizes connection pragmas.
 func InitDB(dbPath string) (*sql.DB, error) {
-	db, err := sql.Open("sqlite", dbPath)
+	// Configure DSN to enable automatic time scanning and timezone parsing for modernc.org/sqlite
+	dsn := fmt.Sprintf("%s?_texttotime=1&_time_format=sqlite", dbPath)
+	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
+
+	// Restrict connection limits to prevent SQLITE_BUSY (database is locked) under concurrent operations
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
 
 	// Set connection pragmas for performance and safety
 	_, err = db.Exec("PRAGMA foreign_keys = ON;")
