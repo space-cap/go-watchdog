@@ -2,7 +2,6 @@ package main
 
 import (
 	"crypto/tls"
-	"database/sql"
 	"fmt"
 	"log"
 	"net/http"
@@ -29,7 +28,7 @@ type Job struct {
 
 // HealthRunner schedules and runs periodic health checks for all active targets.
 type HealthRunner struct {
-	db          *sql.DB
+	store       DataStore
 	notifier    *Notifier
 	statusCache map[int64]string
 	cacheMutex  sync.RWMutex
@@ -39,9 +38,9 @@ type HealthRunner struct {
 }
 
 // NewHealthRunner initializes a HealthRunner instance.
-func NewHealthRunner(db *sql.DB, notifier *Notifier) *HealthRunner {
+func NewHealthRunner(store DataStore, notifier *Notifier) *HealthRunner {
 	return &HealthRunner{
-		db:          db,
+		store:       store,
 		notifier:    notifier,
 		statusCache: make(map[int64]string),
 		jobs:        make(map[int64]*Job),
@@ -89,20 +88,14 @@ func (hr *HealthRunner) syncJobs() {
 	hr.jobsMutex.Lock()
 	defer hr.jobsMutex.Unlock()
 
-	rows, err := hr.db.Query("SELECT id, name, url, interval_seconds, timeout_seconds, is_active, created_at FROM health_targets WHERE is_active = 1")
+	targets, err := hr.store.GetActiveTargets()
 	if err != nil {
 		log.Printf("[HealthRunner] [Error] Failed to query active targets: %v", err)
 		return
 	}
-	defer rows.Close()
 
 	activeDBTargets := make(map[int64]HealthTarget)
-	for rows.Next() {
-		var t HealthTarget
-		if err := rows.Scan(&t.ID, &t.Name, &t.URL, &t.IntervalSeconds, &t.TimeoutSeconds, &t.IsActive, &t.CreatedAt); err != nil {
-			log.Printf("[HealthRunner] [Error] Failed to scan target: %v", err)
-			continue
-		}
+	for _, t := range targets {
 		activeDBTargets[t.ID] = t
 	}
 
@@ -197,10 +190,7 @@ func (hr *HealthRunner) checkTarget(t HealthTarget) {
 	latencyMs := int(latency.Milliseconds())
 
 	// 3. Write results to database
-	_, dbErr := hr.db.Exec(`
-		INSERT INTO health_logs (target_id, status_code, latency_ms, is_success, error_message, timestamp)
-		VALUES (?, ?, ?, ?, ?, ?)
-	`, t.ID, sql.NullInt64{Int64: int64(statusCode), Valid: statusCode > 0}, latencyMs, isSuccess, errMsg, time.Now())
+	dbErr := hr.store.SaveHealthLog(t.ID, statusCode, latencyMs, isSuccess == 1, errMsg)
 	if dbErr != nil {
 		log.Printf("[HealthRunner] [Error] Failed to insert health log for %s: %v", t.Name, dbErr)
 	}
@@ -223,20 +213,9 @@ func (hr *HealthRunner) checkTarget(t HealthTarget) {
 }
 
 func (hr *HealthRunner) getLatestStatusFromDB(targetID int64) string {
-	var isSuccess int
-	err := hr.db.QueryRow(`
-		SELECT is_success FROM health_logs
-		WHERE target_id = ?
-		ORDER BY timestamp DESC
-		LIMIT 1
-	`, targetID).Scan(&isSuccess)
-
+	status, err := hr.store.GetLatestTargetStatus(targetID)
 	if err != nil {
 		return ""
 	}
-
-	if isSuccess == 1 {
-		return "ONLINE"
-	}
-	return "OFFLINE"
+	return status
 }

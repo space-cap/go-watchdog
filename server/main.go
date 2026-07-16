@@ -65,12 +65,12 @@ func main() {
 	})
 
 	// 3. Initialize Database
-	db, err := InitDB(cfg.DBPath)
+	store, err := NewSQLiteStore(cfg.DBPath)
 	if err != nil {
 		log.Fatalf("[Server] [Fatal] Database initialization failed: %v", err)
 	}
 	defer func() {
-		if err := db.Close(); err != nil {
+		if err := store.Close(); err != nil {
 			log.Printf("[Server] [Error] Failed to close database cleanly: %v", err)
 		} else {
 			log.Println("[Server] Database connection closed successfully.")
@@ -79,7 +79,7 @@ func main() {
 	log.Printf("[Server] Database initialized at: %s (Retention: %d days)", cfg.DBPath, cfg.RetentionDays)
 
 	// 4. Setup Server Handler
-	srv := NewServer(db, cfg.AuthToken)
+	srv := NewServer(store, cfg.AuthToken)
 
 	staticFS, err := fs.Sub(templatesFS, "templates")
 	if err != nil {
@@ -88,7 +88,7 @@ func main() {
 
 	// Start Health Check Runner
 	notifier := NewNotifier(cfg.SlackWebhookURL, cfg.DiscordWebhookURL)
-	healthRunner := NewHealthRunner(db, notifier)
+	healthRunner := NewHealthRunner(store, notifier)
 	healthRunner.Start()
 	defer healthRunner.Stop()
 
@@ -122,7 +122,7 @@ func main() {
 
 	// Proactively run an initial cleanup on startup in a background goroutine
 	go func() {
-		if affected, err := CleanupOldMetrics(db, cfg.RetentionDays); err != nil {
+		if affected, err := store.CleanupOldMetrics(cfg.RetentionDays); err != nil {
 			log.Printf("[Server] [Warning] Failed to run initial database cleanup: %v", err)
 		} else if affected > 0 {
 			log.Printf("[Server] Startup cleanup deleted %d expired metric records.", affected)
@@ -132,7 +132,7 @@ func main() {
 	go func() {
 		log.Println("[Server] Background database retention cleaner daemon started.")
 		for range cleanupTicker.C {
-			affected, err := CleanupOldMetrics(db, cfg.RetentionDays)
+			affected, err := store.CleanupOldMetrics(cfg.RetentionDays)
 			if err != nil {
 				log.Printf("[Server] [Error] Background database cleanup failed: %v", err)
 			} else if affected > 0 {

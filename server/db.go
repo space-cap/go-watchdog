@@ -10,8 +10,13 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// InitDB initializes the SQLite database, sets up tables, and optimizes connection pragmas.
-func InitDB(dbPath string) (*sql.DB, error) {
+// SQLiteStore manages connection to a local SQLite database file and implements DataStore interface.
+type SQLiteStore struct {
+	db *sql.DB
+}
+
+// NewSQLiteStore initializes the SQLite database, sets up tables, configures connection pool, and returns SQLiteStore.
+func NewSQLiteStore(dbPath string) (*SQLiteStore, error) {
 	// Configure DSN to enable automatic time scanning and timezone parsing for modernc.org/sqlite
 	dsn := fmt.Sprintf("%s?_texttotime=1&_time_format=sqlite", dbPath)
 	db, err := sql.Open("sqlite", dsn)
@@ -133,12 +138,17 @@ func InitDB(dbPath string) (*sql.DB, error) {
 		return nil, fmt.Errorf("failed to create health_logs timestamp index: %w", err)
 	}
 
-	return db, nil
+	return &SQLiteStore{db: db}, nil
+}
+
+// Close closes the database connection.
+func (s *SQLiteStore) Close() error {
+	return s.db.Close()
 }
 
 // SaveMetric saves a system performance metric payload to the database in a single transaction.
-func SaveMetric(db *sql.DB, m *common.Metric) error {
-	tx, err := db.Begin()
+func (s *SQLiteStore) SaveMetric(m *common.Metric) error {
+	tx, err := s.db.Begin()
 	if err != nil {
 		return err
 	}
@@ -173,8 +183,8 @@ func SaveMetric(db *sql.DB, m *common.Metric) error {
 }
 
 // GetLatestMetrics fetches the most recent metric entry for each monitored agent.
-func GetLatestMetrics(db *sql.DB) ([]*common.Metric, error) {
-	rows, err := db.Query(`
+func (s *SQLiteStore) GetLatestMetrics() ([]*common.Metric, error) {
+	rows, err := s.db.Query(`
 		SELECT id, agent_id, cpu_percent, mem_total_gb, mem_used_gb, mem_percent, timestamp
 		FROM metrics
 		WHERE id IN (
@@ -198,7 +208,7 @@ func GetLatestMetrics(db *sql.DB) ([]*common.Metric, error) {
 			return nil, fmt.Errorf("failed to scan metric: %w", err)
 		}
 
-		disks, err := getDiskMetricsForID(db, id)
+		disks, err := s.getDiskMetricsForID(id)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get disk metrics for id %d: %w", id, err)
 		}
@@ -211,8 +221,8 @@ func GetLatestMetrics(db *sql.DB) ([]*common.Metric, error) {
 }
 
 // getDiskMetricsForID helper function retrieves all disk partition data for a given metric record ID.
-func getDiskMetricsForID(db *sql.DB, metricID int64) ([]common.DiskInfo, error) {
-	rows, err := db.Query(`
+func (s *SQLiteStore) getDiskMetricsForID(metricID int64) ([]common.DiskInfo, error) {
+	rows, err := s.db.Query(`
 		SELECT path, total_gb, used_gb, free_gb, percent
 		FROM disk_metrics
 		WHERE metric_id = ?
@@ -237,9 +247,9 @@ func getDiskMetricsForID(db *sql.DB, metricID int64) ([]common.DiskInfo, error) 
 
 // CleanupOldMetrics deletes all metric and health check records that are older than the specified retention days.
 // Relies on SQLite ON DELETE CASCADE to automatically clean up disk_metrics entries.
-func CleanupOldMetrics(db *sql.DB, retentionDays int) (int64, error) {
+func (s *SQLiteStore) CleanupOldMetrics(retentionDays int) (int64, error) {
 	cutoff := time.Now().AddDate(0, 0, -retentionDays)
-	res, err := db.Exec(`
+	res, err := s.db.Exec(`
 		DELETE FROM metrics
 		WHERE timestamp < ?
 	`, cutoff)
@@ -249,7 +259,7 @@ func CleanupOldMetrics(db *sql.DB, retentionDays int) (int64, error) {
 
 	affectedMetrics, _ := res.RowsAffected()
 
-	res2, err := db.Exec(`
+	res2, err := s.db.Exec(`
 		DELETE FROM health_logs
 		WHERE timestamp < ?
 	`, cutoff)
@@ -260,4 +270,172 @@ func CleanupOldMetrics(db *sql.DB, retentionDays int) (int64, error) {
 	affectedLogs, _ := res2.RowsAffected()
 
 	return affectedMetrics + affectedLogs, nil
+}
+
+// GetHealthTargets fetches all configured health targets.
+func (s *SQLiteStore) GetHealthTargets() ([]HealthTarget, error) {
+	rows, err := s.db.Query("SELECT id, name, url, interval_seconds, timeout_seconds, is_active, created_at FROM health_targets ORDER BY created_at DESC")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	targets := make([]HealthTarget, 0)
+	for rows.Next() {
+		var t HealthTarget
+		if err := rows.Scan(&t.ID, &t.Name, &t.URL, &t.IntervalSeconds, &t.TimeoutSeconds, &t.IsActive, &t.CreatedAt); err != nil {
+			return nil, err
+		}
+		targets = append(targets, t)
+	}
+	return targets, nil
+}
+
+// SaveHealthTarget creates a new health check target.
+func (s *SQLiteStore) SaveHealthTarget(name, url string, interval, timeout int) (int64, error) {
+	res, err := s.db.Exec(`
+		INSERT INTO health_targets (name, url, interval_seconds, timeout_seconds, is_active, created_at)
+		VALUES (?, ?, ?, ?, 1, ?)
+	`, name, url, interval, timeout, time.Now())
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+// DeleteHealthTarget deletes a health check target by ID.
+func (s *SQLiteStore) DeleteHealthTarget(id int64) error {
+	_, err := s.db.Exec("DELETE FROM health_targets WHERE id = ?", id)
+	return err
+}
+
+// GetActiveTargets fetches all active health check targets.
+func (s *SQLiteStore) GetActiveTargets() ([]HealthTarget, error) {
+	rows, err := s.db.Query("SELECT id, name, url, interval_seconds, timeout_seconds, is_active, created_at FROM health_targets WHERE is_active = 1 ORDER BY created_at DESC")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	targets := make([]HealthTarget, 0)
+	for rows.Next() {
+		var t HealthTarget
+		if err := rows.Scan(&t.ID, &t.Name, &t.URL, &t.IntervalSeconds, &t.TimeoutSeconds, &t.IsActive, &t.CreatedAt); err != nil {
+			return nil, err
+		}
+		targets = append(targets, t)
+	}
+	return targets, nil
+}
+
+// SaveHealthLog records the result of a health check.
+func (s *SQLiteStore) SaveHealthLog(targetID int64, statusCode int, latencyMs int, isSuccess bool, errMsg string) error {
+	var isSuccessInt int
+	if isSuccess {
+		isSuccessInt = 1
+	}
+	_, err := s.db.Exec(`
+		INSERT INTO health_logs (target_id, status_code, latency_ms, is_success, error_message, timestamp)
+		VALUES (?, ?, ?, ?, ?, ?)
+	`, targetID, sql.NullInt64{Int64: int64(statusCode), Valid: statusCode > 0}, latencyMs, isSuccessInt, errMsg, time.Now())
+	return err
+}
+
+// GetLatestTargetStatus returns the last recorded status (ONLINE/OFFLINE) for a target.
+func (s *SQLiteStore) GetLatestTargetStatus(targetID int64) (string, error) {
+	var isSuccess int
+	err := s.db.QueryRow(`
+		SELECT is_success FROM health_logs
+		WHERE target_id = ?
+		ORDER BY timestamp DESC
+		LIMIT 1
+	`, targetID).Scan(&isSuccess)
+
+	if err != nil {
+		return "", err
+	}
+
+	if isSuccess == 1 {
+		return "ONLINE", nil
+	}
+	return "OFFLINE", nil
+}
+
+// GetHealthTargetsStatus returns the status and recent check history for all active targets.
+func (s *SQLiteStore) GetHealthTargetsStatus() ([]HealthTargetStatus, error) {
+	rows, err := s.db.Query("SELECT id, name, url, interval_seconds FROM health_targets WHERE is_active = 1 ORDER BY created_at DESC")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	response := make([]HealthTargetStatus, 0)
+
+	for rows.Next() {
+		var status HealthTargetStatus
+		if err := rows.Scan(&status.ID, &status.Name, &status.URL, &status.Interval); err != nil {
+			return nil, err
+		}
+
+		var logID int64
+		var statusCode sql.NullInt64
+		var latencyMs int
+		var isSuccess int
+		var errMsg sql.NullString
+		var timestamp time.Time
+
+		err := s.db.QueryRow(`
+			SELECT id, status_code, latency_ms, is_success, error_message, timestamp
+			FROM health_logs
+			WHERE target_id = ?
+			ORDER BY timestamp DESC
+			LIMIT 1
+		`, status.ID).Scan(&logID, &statusCode, &latencyMs, &isSuccess, &errMsg, &timestamp)
+
+		if err == sql.ErrNoRows {
+			status.Status = "PENDING"
+			status.History = make([]int, 0)
+		} else if err != nil {
+			return nil, err
+		} else {
+			status.LastCheck = timestamp
+			status.LastLatencyMs = latencyMs
+			status.LastStatusCode = int(statusCode.Int64)
+			status.ErrorMessage = errMsg.String
+			if isSuccess == 1 {
+				status.Status = "ONLINE"
+			} else {
+				status.Status = "OFFLINE"
+			}
+
+			historyRows, err := s.db.Query(`
+				SELECT is_success
+				FROM health_logs
+				WHERE target_id = ?
+				ORDER BY timestamp DESC
+				LIMIT 10
+			`, status.ID)
+			if err == nil {
+				history := make([]int, 0, 10)
+				for historyRows.Next() {
+					var hSuccess int
+					if err := historyRows.Scan(&hSuccess); err == nil {
+						history = append(history, hSuccess)
+					}
+				}
+				historyRows.Close()
+
+				for i, j := 0, len(history)-1; i < j; i, j = i+1, j-1 {
+					history[i], history[j] = history[j], history[i]
+				}
+				status.History = history
+			} else {
+				status.History = make([]int, 0)
+			}
+		}
+
+		response = append(response, status)
+	}
+
+	return response, nil
 }

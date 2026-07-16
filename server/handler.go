@@ -1,12 +1,12 @@
 package main
 
 import (
-	"database/sql"
 	"embed"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -18,14 +18,14 @@ var templatesFS embed.FS
 
 // Server handles all HTTP routing, authentication, and database dependency mapping.
 type Server struct {
-	db        *sql.DB
+	store     DataStore
 	authToken string
 }
 
 // NewServer initializes a new Server instance.
-func NewServer(db *sql.DB, authToken string) *Server {
+func NewServer(store DataStore, authToken string) *Server {
 	return &Server{
-		db:        db,
+		store:     store,
 		authToken: authToken,
 	}
 }
@@ -117,7 +117,7 @@ func (s *Server) HandlePostMetrics(w http.ResponseWriter, r *http.Request) {
 		m.Timestamp = time.Now()
 	}
 
-	if err := SaveMetric(s.db, &m); err != nil {
+	if err := s.store.SaveMetric(&m); err != nil {
 		log.Printf("[Server] [Error] Failed to save metrics for %s: %v", m.AgentID, err)
 		http.Error(w, "Internal Server Error: Failed to store metrics database side", http.StatusInternalServerError)
 		return
@@ -135,7 +135,7 @@ func (s *Server) HandleGetStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	metrics, err := GetLatestMetrics(s.db)
+	metrics, err := s.store.GetLatestMetrics()
 	if err != nil {
 		log.Printf("[Server] [Error] Failed to fetch latest status: %v", err)
 		http.Error(w, "Internal Server Error: Database retrieval error", http.StatusInternalServerError)
@@ -185,22 +185,11 @@ func (s *Server) HandleGetHealthTargets(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	rows, err := s.db.Query("SELECT id, name, url, interval_seconds, timeout_seconds, is_active, created_at FROM health_targets ORDER BY created_at DESC")
+	targets, err := s.store.GetHealthTargets()
 	if err != nil {
 		log.Printf("[Server] [Error] Failed to query health targets: %v", err)
 		http.Error(w, "Database query error", http.StatusInternalServerError)
 		return
-	}
-	defer rows.Close()
-
-	targets := make([]HealthTarget, 0)
-	for rows.Next() {
-		var t HealthTarget
-		if err := rows.Scan(&t.ID, &t.Name, &t.URL, &t.IntervalSeconds, &t.TimeoutSeconds, &t.IsActive, &t.CreatedAt); err != nil {
-			log.Printf("[Server] [Error] Failed to scan health target: %v", err)
-			continue
-		}
-		targets = append(targets, t)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -243,18 +232,12 @@ func (s *Server) HandlePostHealthTarget(w http.ResponseWriter, r *http.Request) 
 		req.TimeoutSeconds = 5
 	}
 
-	res, err := s.db.Exec(`
-		INSERT INTO health_targets (name, url, interval_seconds, timeout_seconds, is_active, created_at)
-		VALUES (?, ?, ?, ?, 1, ?)
-	`, req.Name, req.URL, req.IntervalSeconds, req.TimeoutSeconds, time.Now())
-
+	id, err := s.store.SaveHealthTarget(req.Name, req.URL, req.IntervalSeconds, req.TimeoutSeconds)
 	if err != nil {
 		log.Printf("[Server] [Error] Failed to insert health target: %v", err)
 		http.Error(w, "Database insert error", http.StatusInternalServerError)
 		return
 	}
-
-	id, _ := res.LastInsertId()
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
@@ -279,7 +262,13 @@ func (s *Server) HandleDeleteHealthTarget(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	_, err := s.db.Exec("DELETE FROM health_targets WHERE id = ?", idStr)
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		http.Error(w, "Bad Request: invalid id format", http.StatusBadRequest)
+		return
+	}
+
+	err = s.store.DeleteHealthTarget(id)
 	if err != nil {
 		log.Printf("[Server] [Error] Failed to delete health target: %v", err)
 		http.Error(w, "Database delete error", http.StatusInternalServerError)
@@ -310,85 +299,19 @@ func (s *Server) HandleGetHealthStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rows, err := s.db.Query("SELECT id, name, url, interval_seconds FROM health_targets WHERE is_active = 1 ORDER BY created_at DESC")
+	response, err := s.store.GetHealthTargetsStatus()
 	if err != nil {
 		log.Printf("[Server] [Error] Failed to query active targets: %v", err)
 		http.Error(w, "Database query error", http.StatusInternalServerError)
 		return
 	}
-	defer rows.Close()
 
-	response := make([]HealthTargetStatus, 0)
-
-	for rows.Next() {
-		var status HealthTargetStatus
-		if err := rows.Scan(&status.ID, &status.Name, &status.URL, &status.Interval); err != nil {
-			continue
+	// Apply admin privilege restriction (hide URLs for non-admins)
+	isAdmin := s.isAdmin(r)
+	for i := range response {
+		if !isAdmin {
+			response[i].URL = "Hidden (Admin Only)"
 		}
-
-		if !s.isAdmin(r) {
-			status.URL = "Hidden (Admin Only)"
-		}
-
-		var logID int64
-		var statusCode sql.NullInt64
-		var latencyMs int
-		var isSuccess int
-		var errMsg sql.NullString
-		var timestamp time.Time
-
-		err := s.db.QueryRow(`
-			SELECT id, status_code, latency_ms, is_success, error_message, timestamp
-			FROM health_logs
-			WHERE target_id = ?
-			ORDER BY timestamp DESC
-			LIMIT 1
-		`, status.ID).Scan(&logID, &statusCode, &latencyMs, &isSuccess, &errMsg, &timestamp)
-
-		if err == sql.ErrNoRows {
-			status.Status = "PENDING"
-			status.History = make([]int, 0)
-		} else if err != nil {
-			log.Printf("[Server] [Error] Failed to query latest health log for ID %d: %v", status.ID, err)
-			continue
-		} else {
-			status.LastCheck = timestamp
-			status.LastLatencyMs = latencyMs
-			status.LastStatusCode = int(statusCode.Int64)
-			status.ErrorMessage = errMsg.String
-			if isSuccess == 1 {
-				status.Status = "ONLINE"
-			} else {
-				status.Status = "OFFLINE"
-			}
-
-			historyRows, err := s.db.Query(`
-				SELECT is_success
-				FROM health_logs
-				WHERE target_id = ?
-				ORDER BY timestamp DESC
-				LIMIT 10
-			`, status.ID)
-			if err == nil {
-				history := make([]int, 0, 10)
-				for historyRows.Next() {
-					var hSuccess int
-					if err := historyRows.Scan(&hSuccess); err == nil {
-						history = append(history, hSuccess)
-					}
-				}
-				historyRows.Close()
-				
-				for i, j := 0, len(history)-1; i < j; i, j = i+1, j-1 {
-					history[i], history[j] = history[j], history[i]
-				}
-				status.History = history
-			} else {
-				status.History = make([]int, 0)
-			}
-		}
-
-		response = append(response, status)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
