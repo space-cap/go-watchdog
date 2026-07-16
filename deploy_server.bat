@@ -16,10 +16,6 @@ set SERVER_USER=ubuntu
 set TARGET_DIR=~/go-watchdog
 
 echo 1. Stopping remote watchdog-server...
-:: [방법 A] systemd 서비스를 사용하는 경우 (권장)
-:: ssh -i %KEY_PATH% %SERVER_USER%@%SERVER_IP% "sudo systemctl stop go-watchdog"
-
-:: [방법 B] 만약 nohup 백그라운드로 직접 구동 중인 경우
 ssh -n -i %KEY_PATH% %SERVER_USER%@%SERVER_IP% "pkill -f watchdog-server"
 
 echo 2. Uploading watchdog-server binary via SCP...
@@ -32,10 +28,6 @@ if %ERRORLEVEL% neq 0 (
 )
 
 echo 3. Starting remote watchdog-server...
-:: [방법 A] systemd 서비스를 사용하는 경우 (권장)
-:: ssh -i %KEY_PATH% %SERVER_USER%@%SERVER_IP% "chmod +x %TARGET_DIR%/watchdog-server && sudo cp %TARGET_DIR%/watchdog-server /opt/go-watchdog/watchdog-server && sudo systemctl start go-watchdog"
-
-:: [방법 B] 만약 nohup 백그라운드로 직접 구동 중인 경우
 ssh -n -i %KEY_PATH% %SERVER_USER%@%SERVER_IP% "chmod +x %TARGET_DIR%/watchdog-server && cd %TARGET_DIR% && nohup ./watchdog-server -config config.json > server.log 2>&1 < /dev/null &"
 
 echo ===================================================
