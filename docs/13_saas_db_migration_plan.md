@@ -102,6 +102,55 @@ type Server struct {
 }
 ```
 
+### 2.4 config.json 분기 설정 및 드라이버 팩토리 패턴 구현
+동일한 백엔드 바이너리를 환경에 맞게 동적으로 로드할 수 있도록 설정을 다변화합니다.
+
+#### A. config.json 설정 명세 추가
+개발 환경(`sqlite`)과 상용 서비스 환경(`postgres`)을 구분하기 위한 데이터베이스 연결 유형 설정을 확장합니다.
+```json
+{
+  "port": 9090,
+  "auth_token": "watchdog-secret-token",
+  
+  "db_type": "postgres", 
+  "db_path": "monitoring.db", 
+  "db_dsn": "postgres://username:password@localhost:5432/monitoring?sslmode=disable",
+  
+  "retention_days": 7
+}
+```
+
+#### B. 드라이버 팩토리 로직 구현 (`server/main.go` 부트스트랩)
+애플리케이션 시작 단계에서 설정 파일의 `db_type`을 파싱하여 동적으로 `DataStore` 구현체를 인스턴스화합니다.
+```go
+func main() {
+	cfg := LoadConfig("config.json")
+
+	var store DataStore
+	var err error
+
+	// 설정값에 따라 데이터베이스 드라이버 동적 선택 (Factory Pattern)
+	switch cfg.DBType {
+	case "postgres":
+		log.Println("[Server] Connecting to PostgreSQL database...")
+		store, err = NewPostgresStore(cfg.DBDSN)
+	case "sqlite":
+		fallthrough
+	default:
+		log.Println("[Server] Connecting to SQLite database...")
+		store, err = NewSQLiteStore(cfg.DBPath)
+	}
+
+	if err != nil {
+		log.Fatalf("[Server] [Fatal] Failed to initialize database store: %v", err)
+	}
+	defer store.Close()
+
+	// 이후 로직(Health Check Runner, HTTP API Handlers)은 
+	// 실제 구동 DB 종류를 인지할 필요 없이 store 변수를 통해 인터페이스 메서드만 실행합니다.
+}
+```
+
 ---
 
 ## 3. 2단계: PostgreSQL & TimescaleDB 스키마 설계
