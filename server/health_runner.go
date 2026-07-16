@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/tls"
 	"database/sql"
 	"fmt"
 	"log"
@@ -163,9 +164,12 @@ func (hr *HealthRunner) checkTarget(t HealthTarget) {
 	}
 	hr.cacheMutex.Unlock()
 
-	// 2. Perform HTTP call
+	// 2. Perform HTTP call (allowing self-signed/development TLS certificates)
 	client := &http.Client{
 		Timeout: time.Duration(t.TimeoutSeconds) * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		},
 	}
 
 	start := time.Now()

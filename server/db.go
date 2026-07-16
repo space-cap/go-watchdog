@@ -19,9 +19,9 @@ func InitDB(dbPath string) (*sql.DB, error) {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
 
-	// Restrict connection limits to prevent SQLITE_BUSY (database is locked) under concurrent operations
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
+	// Set connection pool limits to prevent deadlocks on nested queries
+	db.SetMaxOpenConns(10)
+	db.SetMaxIdleConns(10)
 
 	// Set connection pragmas for performance and safety
 	_, err = db.Exec("PRAGMA foreign_keys = ON;")
