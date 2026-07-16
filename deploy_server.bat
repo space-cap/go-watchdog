@@ -42,4 +42,3 @@ echo ===================================================
 echo [SUCCESS] watchdog-server uploaded and restarted!
 echo ===================================================
 pause
-
