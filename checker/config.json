@@ -1,0 +1,5 @@
+{
+  "portal_url": "http://localhost:3088",
+  "checker_token": "watchdog-secret-token",
+  "sync_interval_seconds": 30
+}
