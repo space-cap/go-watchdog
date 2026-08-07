@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"go-watchdog/common"
@@ -18,15 +19,18 @@ var templatesFS embed.FS
 
 // Server handles all HTTP routing, authentication, and database dependency mapping.
 type Server struct {
-	store     DataStore
-	authToken string
+	store       DataStore
+	authToken   string
+	cacheMutex  sync.RWMutex
+	metricCache map[string]*common.Metric
 }
 
 // NewServer initializes a new Server instance.
 func NewServer(store DataStore, authToken string) *Server {
 	return &Server{
-		store:     store,
-		authToken: authToken,
+		store:       store,
+		authToken:   authToken,
+		metricCache: make(map[string]*common.Metric),
 	}
 }
 
@@ -123,6 +127,11 @@ func (s *Server) HandlePostMetrics(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Update in-memory cache for instant zero-DB dashboard response
+	s.cacheMutex.Lock()
+	s.metricCache[m.AgentID] = &m
+	s.cacheMutex.Unlock()
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_, _ = w.Write([]byte(`{"status":"success"}`))
@@ -135,11 +144,36 @@ func (s *Server) HandleGetStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	metrics, err := s.store.GetLatestMetrics()
-	if err != nil {
-		log.Printf("[Server] [Error] Failed to fetch latest status: %v", err)
-		http.Error(w, "Internal Server Error: Database retrieval error", http.StatusInternalServerError)
-		return
+	// Check in-memory cache first to avoid DB query overhead
+	s.cacheMutex.RLock()
+	hasCache := len(s.metricCache) > 0
+	cachedList := make([]*common.Metric, 0, len(s.metricCache))
+	if hasCache {
+		for _, m := range s.metricCache {
+			cachedList = append(cachedList, m)
+		}
+	}
+	s.cacheMutex.RUnlock()
+
+	var metrics []*common.Metric
+	var err error
+
+	if hasCache {
+		metrics = cachedList
+	} else {
+		// Fallback to DB query on cold startup if cache is empty
+		metrics, err = s.store.GetLatestMetrics()
+		if err != nil {
+			log.Printf("[Server] [Error] Failed to fetch latest status: %v", err)
+			http.Error(w, "Internal Server Error: Database retrieval error", http.StatusInternalServerError)
+			return
+		}
+		// Populate cache from DB query result
+		s.cacheMutex.Lock()
+		for _, m := range metrics {
+			s.metricCache[m.AgentID] = m
+		}
+		s.cacheMutex.Unlock()
 	}
 
 	// Response DTO containing agent metrics and its computed status

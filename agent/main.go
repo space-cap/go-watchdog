@@ -54,9 +54,6 @@ func main() {
 			// Send to backend
 			if err := sender.Send(metric); err != nil {
 				log.Printf("[Agent] [Error] Failed to push metrics: %v", err)
-			} else {
-				log.Printf("[Agent] Metrics reported. CPU: %.1f%%, RAM: %.1f%%, Disk Partitions: %d",
-					metric.CPUPercent, metric.MemPercent, len(metric.Disks))
 			}
 
 		case sig := <-sigChan:

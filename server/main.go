@@ -41,7 +41,7 @@ func main() {
 			Port:          9090,
 			AuthToken:     "watchdog-secret-token",
 			DBPath:        "monitoring.db",
-			RetentionDays: 14,
+			RetentionDays: 1,
 		}
 		log.Printf("[Server] Configuration file %s not found. Using default values.", *configPath)
 	}

@@ -40,7 +40,7 @@ func LoadConfig(path string) (*Config, error) {
 		config.DBPath = "monitoring.db"
 	}
 	if config.RetentionDays <= 0 {
-		config.RetentionDays = 14
+		config.RetentionDays = 1
 	}
 
 	return &config, nil

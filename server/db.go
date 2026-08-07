@@ -3,6 +3,7 @@ package main
 import (
 	"database/sql"
 	"fmt"
+	"log"
 	"time"
 
 	"go-watchdog/common"
@@ -90,6 +91,18 @@ func NewSQLiteStore(dbPath string) (*SQLiteStore, error) {
 	if _, err := db.Exec(queryCreateMetricsTimestampIndex); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("failed to create metrics timestamp index: %w", err)
+	}
+
+	queryCreateIndexAgentIDDesc := `CREATE INDEX IF NOT EXISTS idx_metrics_agent_id_desc ON metrics(agent_id, id DESC);`
+	if _, err := db.Exec(queryCreateIndexAgentIDDesc); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("failed to create agent_id desc index: %w", err)
+	}
+
+	queryCreateDiskMetricsMetricIDIndex := `CREATE INDEX IF NOT EXISTS idx_disk_metrics_metric_id ON disk_metrics(metric_id);`
+	if _, err := db.Exec(queryCreateDiskMetricsMetricIDIndex); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("failed to create disk_metrics metric_id index: %w", err)
 	}
 
 	// Create health_targets table
@@ -248,10 +261,10 @@ func (s *SQLiteStore) getDiskMetricsForID(metricID int64) ([]common.DiskInfo, er
 // CleanupOldMetrics deletes all metric and health check records that are older than the specified retention days.
 // Relies on SQLite ON DELETE CASCADE to automatically clean up disk_metrics entries.
 func (s *SQLiteStore) CleanupOldMetrics(retentionDays int) (int64, error) {
-	cutoff := time.Now().AddDate(0, 0, -retentionDays)
+	cutoff := time.Now().AddDate(0, 0, -retentionDays).Format("2006-01-02 15:04:05")
 	res, err := s.db.Exec(`
 		DELETE FROM metrics
-		WHERE timestamp < ?
+		WHERE datetime(timestamp) < datetime(?)
 	`, cutoff)
 	if err != nil {
 		return 0, fmt.Errorf("failed to clean up old metrics: %w", err)
@@ -259,9 +272,12 @@ func (s *SQLiteStore) CleanupOldMetrics(retentionDays int) (int64, error) {
 
 	affectedMetrics, _ := res.RowsAffected()
 
+	// Clean up any orphan disk_metrics
+	_, _ = s.db.Exec(`DELETE FROM disk_metrics WHERE metric_id NOT IN (SELECT id FROM metrics)`)
+
 	res2, err := s.db.Exec(`
 		DELETE FROM health_logs
-		WHERE timestamp < ?
+		WHERE datetime(timestamp) < datetime(?)
 	`, cutoff)
 	if err != nil {
 		return affectedMetrics, fmt.Errorf("failed to clean up old health logs: %w", err)
@@ -269,7 +285,16 @@ func (s *SQLiteStore) CleanupOldMetrics(retentionDays int) (int64, error) {
 
 	affectedLogs, _ := res2.RowsAffected()
 
-	return affectedMetrics + affectedLogs, nil
+	totalAffected := affectedMetrics + affectedLogs
+	if totalAffected > 0 {
+		if _, err := s.db.Exec("VACUUM;"); err != nil {
+			log.Printf("[Server] [Warning] Failed to VACUUM database after metrics cleanup: %v", err)
+		} else {
+			log.Println("[Server] Database VACUUM completed successfully to reclaim disk space.")
+		}
+	}
+
+	return totalAffected, nil
 }
 
 // GetHealthTargets fetches all configured health targets.
